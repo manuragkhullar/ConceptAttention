@@ -20,7 +20,7 @@ if __name__ == "__main__":
 
     segmentation_model = RawOutputSpaceSegmentationModel(
         model_name="flux-schnell",
-        device="cuda:2",
+        device="cuda:0",
         offload=False,
     )
 
@@ -28,20 +28,11 @@ if __name__ == "__main__":
         image,
         concepts,
         caption=prompt,
-        device="cuda:2",
+        device="cuda:0",
         softmax=True,
         layers=layers,
         num_samples=5
     )
-    
-    # (
-    #     [image],
-    #     ["dog", "tree", "ball", "grass", "sky"],
-    #     concepts,
-    #     captions=[prompt],
-    #     layers=layers,
-    #     device="cuda:2"
-    # )
 
     # Plot the coefficients
     vmin = coefficients.min()

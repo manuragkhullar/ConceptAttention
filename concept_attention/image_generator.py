@@ -5,9 +5,9 @@ import numpy as np
 from einops import rearrange
 from transformers import pipeline
 
-from flux.cli import SamplingOptions
-from flux.sampling import denoise, get_noise, get_schedule, prepare, unpack
-from flux.util import configs, embed_watermark, load_ae, load_clip, load_t5
+from concept_attention.flux.src.flux.cli import SamplingOptions
+from concept_attention.flux.src.flux.sampling import denoise, get_noise, get_schedule, prepare, unpack
+from concept_attention.flux.src.flux.util import configs, embed_watermark, load_ae, load_clip, load_t5
 
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file as load_sft

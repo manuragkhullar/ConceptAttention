@@ -11,11 +11,10 @@ import PIL
 from torchvision import transforms
 import torchvision.transforms.functional as F
 
-from flux.sampling import get_noise, get_schedule, prepare, unpack
+from concept_attention.flux.src.flux.sampling import get_noise, get_schedule, prepare, unpack
 
 from concept_attention.image_generator import FluxGenerator
 from concept_attention.utils import embed_concepts, linear_normalization
-from concept_attention.segmentation import add_noise_to_image
 
 class SegmentationAbstractClass(ABC):
 

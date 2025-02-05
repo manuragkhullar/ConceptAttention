@@ -1,7 +1,7 @@
 """
     This baseline just returns heatmaps as the raw cross attentions.
 """
-from flux.sampling import prepare, unpack
+from concept_attention.flux.src.flux.sampling import prepare, unpack
 import torch
 import einops
 import PIL

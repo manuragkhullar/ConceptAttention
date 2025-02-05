@@ -7,9 +7,9 @@ from huggingface_hub import hf_hub_download
 from imwatermark import WatermarkEncoder
 from safetensors.torch import load_file as load_sft
 
-from flux.model import Flux, FluxParams
-from flux.modules.autoencoder import AutoEncoder, AutoEncoderParams
-from flux.modules.conditioner import HFEmbedder
+from concept_attention.flux.src.flux.model import Flux, FluxParams
+from concept_attention.flux.src.flux.modules.autoencoder import AutoEncoder, AutoEncoderParams
+from concept_attention.flux.src.flux.modules.conditioner import HFEmbedder
 
 
 @dataclass

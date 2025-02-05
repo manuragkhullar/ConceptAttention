@@ -163,7 +163,7 @@ have installed the package as above.
 Usage from python:
 
 ```python
-from flux.api import ImageRequest
+from concept_attention.flux.src.flux.api import ImageRequest
 
 # this will create an api request directly but not block until the generation is finished
 request = ImageRequest("A beautiful beach", name="flux.1.1-pro")

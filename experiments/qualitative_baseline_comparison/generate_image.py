@@ -24,22 +24,22 @@ from concept_attention.image_generator import FluxGenerator
 if __name__ == "__main__":
     # prompt = "A dog by a cat with a ball in a grassy field. Sky in the background. Cloudy with sun."
     prompt = "A dragon on a rock with wings spread. Sun in sky. ."
-    cuda = "cuda:1"
+    cuda = "cuda:0"
     generator = FluxGenerator(
         model_name="flux-schnell",
         device=cuda,
         offload=False,
     )
 
-    for seed in range(20):
-        image = generator.generate_image(
-            width=1024, 
-            height=1024,
-            num_steps=4,
-            prompt=prompt,
-            concepts=["dog", "tree", "ball"],
-            seed=seed,
-            guidance=0.0,
-        )
+    # for seed in range(20):
+    image = generator.generate_image(
+        width=1024, 
+        height=1024,
+        num_steps=4,
+        prompt=prompt,
+        concepts=["dog", "tree", "ball"],
+        seed=0,
+        guidance=0.0,
+    )
 
-        image.save(f"data/image_{seed}.png")
+    image.save(f"data/dragon_image.png")

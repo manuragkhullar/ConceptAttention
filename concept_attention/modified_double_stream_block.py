@@ -5,8 +5,8 @@ import math
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-from flux.modules.layers import Modulation, SelfAttention
-from flux.math import apply_rope
+from concept_attention.flux.src.flux.modules.layers import Modulation, SelfAttention
+from concept_attention.flux.src.flux.math import apply_rope
 
 
 def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor) -> Tensor:
@@ -151,91 +151,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
         self.text_key_vectors.append(txt_k.detach().cpu())
         self.text_query_vectors.append(txt_q.detach().cpu())
         self.text_value_vectors.append(txt_v.detach().cpu())
-        # Concatenate each modality
-        # q = torch.cat((txt_q, img_q, concept_q, null_txt_q), dim=2)
-        # k = torch.cat((txt_k, img_k, concept_k, null_txt_k), dim=2)
-        # v = torch.cat((txt_v, img_v, concept_v, null_txt_v), dim=2)
-        # # Concatenate concept pe
-        # # pe = torch.cat((pe, concept_pe), dim=1)
-        # # Apply the rotary position encoding
-        # q, k = apply_rope(q, k, pe)
-        # """
-        #     Here we jointly do the concept attention and the image/text attention
-        #     In order to ensure that the image modality influences the concepts, but the concept
-        #     does not influence the text or the image we need to use an attention mask. 
-        # """
-        # # Make indices arrays for each modality 
-        # txt_start, txt_end = 0, txt.shape[1]
-        # img_start, img_end = txt_end, txt_end + img.shape[1]
-        # concept_start, concept_end = img_end, img_end + concepts.shape[1]
-        # null_txt_start, null_txt_end = concept_end, concept_end + null_txt.shape[1]
-        # # Make the mask for the attention
-        # attn_mask = torch.zeros(q.shape[2], k.shape[2], device=q.device, dtype=q.dtype)
-        # # Set the image/text section to 1
-        # attn_mask[
-        #     txt_start:img_end, # Text and image tokens
-        #     txt_start:img_end # Text and image tokens
-        # ] = 1
-        # # Set the concept/concept section to one (concept self-attention)
-        # attn_mask[
-        #     concept_start:concept_end, # Concept tokens
-        #     concept_start:concept_end # Concept tokens
-        # ] = 1 
-        # # Set the section allowing concept to pull from image (NOT the other way around!!)
-        # attn_mask[
-        #     concept_start:concept_end,
-        #     img_start:concept_end
-        # ] = 1
-        # # Allow self-attention for the null text
-        # attn_mask[
-        #     null_txt_start:null_txt_end,
-        #     null_txt_start:null_txt_end
-        # ] = 1
-        # # Do cross atttention between null text and the image tokens
-        # attn_mask[
-        #     null_txt_start:null_txt_end,
-        #     img_start:img_end
-        # ] = 1
-        # attn_mask[
-        #     img_start:img_end,
-        #     null_txt_start:null_txt_end
-        # ]
-        # # Do the attention operation
-        # attn = F.scaled_dot_product_attention(
-        #     q, 
-        #     k, 
-        #     v,
-        #     attn_mask=attn_mask
-        # )
-        # # Make cross attention heatmap
-        # img_txt_q = q[:, :, :txt.shape[1] + img.shape[1]]
-        # img_txt_k = k[:, :, :txt.shape[1] + img.shape[1]]
-        # attention_weights = einops.einsum(
-        #     img_txt_q,
-        #     img_txt_k,
-        #     "batch heads queries dim, batch heads keys dim -> batch heads queries keys"
-        # )
-        # attention_weights = torch.softmax(attention_weights, dim=-1)
-        # attention_weights = einops.reduce(
-        #     attention_weights,
-        #     "batch heads queries keys -> queries keys",
-        #     reduction="mean"
-        # )
-        # cross_attention_weights = attention_weights[txt.shape[1]:, :txt.shape[1]]
-        # cross_attention_weights = einops.rearrange(
-        #     cross_attention_weights,
-        #     "(h w) concepts -> concepts h w",
-        #     h=64,
-        #     w=64
-        # )
-        # self.cross_attention_maps.append(
-        #     cross_attention_weights.detach().cpu()
-        # )
-        # # Separate the image and text attentions
-        # txt_attn = attn[:, :, txt_start:txt_end]
-        # img_attn = attn[:, :, img_start:img_end]
-        # concept_attn = attn[:, :, concept_start:concept_end]
-        # null_txt_attn = attn[:, :, null_txt_start:null_txt_end]
         ########## Do the text-image joint attention ##########
         text_image_q = torch.cat((txt_q, img_q), dim=2)
         text_image_k = torch.cat((txt_k, img_k), dim=2)

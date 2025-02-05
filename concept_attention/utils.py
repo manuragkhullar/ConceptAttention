@@ -13,7 +13,7 @@ def embed_concepts(
         Here the goal is to embed a bunch of concept vectors 
         into our text embedding space.  
     """
-    # Code pulled from flux/sampling.py: prepare()
+    # Code pulled from concept_attention.flux/sampling.py: prepare()
     # Embed each concept separately
     concept_embeddings = []
     for concept in concepts:
