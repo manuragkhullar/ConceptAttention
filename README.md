@@ -1,3 +1,4 @@
+# ConceptAttention: Diffusion Transformers Learn Highly Interpretable Features
 [![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-sm-dark.svg)](https://huggingface.co/spaces/helblazer811/ConceptAttention)
 [![arxiv badge](https://img.shields.io/badge/arXiv-2502.04320-red)](https://arxiv.org/abs/2502.04320)
 
