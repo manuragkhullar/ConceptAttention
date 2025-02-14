@@ -85,9 +85,6 @@ class ModifiedFluxDiT(nn.Module):
         concepts: Tensor,
         concept_ids: Tensor,
         concept_vec: Tensor,
-        null_txt: Tensor,
-        null_txt_ids: Tensor,
-        null_txt_vec: Tensor,
         timesteps: Tensor,
         y: Tensor,
         guidance: Tensor | None = None,
@@ -115,9 +112,7 @@ class ModifiedFluxDiT(nn.Module):
         pe = self.pe_embedder(ids)
         # Compute positional encodings
         ids_with_concepts = torch.cat((concept_ids, img_ids), dim=1)
-        ids_with_null_text = torch.cat((null_txt_ids, img_ids), dim=1)
         pe_with_concepts = self.pe_embedder(ids_with_concepts)
-        pe_with_null_text = self.pe_embedder(ids_with_null_text)
         ################ Process concept vectors ################
         original_concept_vec = concept_vec
         concept_vec = self.time_in(timestep_embedding(timesteps, 256))
@@ -127,18 +122,9 @@ class ModifiedFluxDiT(nn.Module):
             concept_vec = concept_vec + self.guidance_in(timestep_embedding(guidance, 256))
         concept_vec = concept_vec + self.vector_in(original_concept_vec)
         concepts = self.txt_in(concepts)
-        ############### Process null text vectors ###############
-        original_null_txt_vec = null_txt_vec
-        null_txt_vec = self.time_in(timestep_embedding(timesteps, 256))
-        if self.params.guidance_embed:
-            if guidance is None:
-                raise ValueError("Didn't get guidance strength for guidance distilled model.")
-            null_txt_vec = null_txt_vec + self.guidance_in(timestep_embedding(guidance, 256))
-        null_txt_vec = null_txt_vec + self.vector_in(original_null_txt_vec)
-        null_txt = self.txt_in(null_txt)
         ############## Modify the double blocks to also return concept vectors ##############
         for block in self.double_blocks:
-            img, txt, concepts, null_txt = block(
+            img, txt, concepts = block(
                 img=img, 
                 txt=txt, 
                 vec=vec, 
@@ -146,9 +132,6 @@ class ModifiedFluxDiT(nn.Module):
                 concepts=concepts,
                 concept_vec=concept_vec,
                 concept_pe=pe_with_concepts,
-                null_txt=null_txt,
-                null_txt_vec=null_txt_vec,
-                null_txt_pe=pe_with_null_text,
                 edit_metadata=edit_metadata,
                 iteration=iteration,
                 joint_attention_kwargs=joint_attention_kwargs
@@ -163,7 +146,7 @@ class ModifiedFluxDiT(nn.Module):
 
         # Do the single blocks now
         for block in self.single_blocks:
-            img, concepts = block(img, concepts=concepts, vec=vec, pe=pe, concept_pe=pe_with_concepts)
+            img = block(img, vec=vec, pe=pe)
 
         img = img[:, txt.shape[1] :, ...]
 

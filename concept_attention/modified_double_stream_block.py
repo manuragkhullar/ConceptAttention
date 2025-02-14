@@ -106,9 +106,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
         concepts: Tensor, 
         concept_vec: Tensor,
         concept_pe: Tensor,
-        null_txt: Tensor,
-        null_txt_vec: Tensor,
-        null_txt_pe: Tensor,
         joint_attention_kwargs=None,
         **kwargs
     ) -> tuple[Tensor, Tensor]:
@@ -116,7 +113,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
         img_mod1, img_mod2 = self.img_mod(vec)
         txt_mod1, txt_mod2 = self.txt_mod(vec)
         concept_mod1, concept_mod2 = self.txt_mod(concept_vec)
-        null_txt_mod1, null_txt_mod2 = self.txt_mod(null_txt_vec)
         # Prepare image for attention
         img_modulated = self.img_norm1(img)
         img_modulated = (1 + img_mod1.scale) * img_modulated + img_mod1.shift
@@ -135,12 +131,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
         concept_qkv = self.txt_attn.qkv(concept_modulated)
         concept_q, concept_k, concept_v = einops.rearrange(concept_qkv, "B L (K H D) -> K B H L D", K=3, H=self.num_heads)
         concept_q, concept_k = self.txt_attn.norm(concept_q, concept_k, concept_v)
-        # Prepare null text for attention
-        null_txt_modulated = self.txt_norm1(null_txt)
-        null_txt_modulated = (1 + null_txt_mod1.scale) * null_txt_modulated + null_txt_mod1.shift
-        null_txt_qkv = self.txt_attn.qkv(null_txt_modulated)
-        null_txt_q, null_txt_k, null_txt_v = einops.rearrange(null_txt_qkv, "B L (K H D) -> K B H L D", K=3, H=self.num_heads)
-        null_txt_q, null_txt_k = self.txt_attn.norm(null_txt_q, null_txt_k, null_txt_v)
         # Save concept key vectors
         self.concept_key_vectors.append(concept_k.detach().cpu())
         self.concept_query_vectors.append(concept_q.detach().cpu())
@@ -216,21 +206,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
             # Separate the concept and image attentions
             concept_attn = concept_image_attn[:, :, :concepts.shape[1]]
 
-        ########## Do the null text-image joint attention ##########
-        null_text_image_q = torch.cat((null_txt_q, img_q), dim=2)
-        null_text_image_k = torch.cat((null_txt_k, img_k), dim=2)
-        null_text_image_v = torch.cat((null_txt_v, img_v), dim=2)
-        # Apply rope
-        null_text_image_q, null_text_image_k = apply_rope(null_text_image_q, null_text_image_k, null_txt_pe)
-        # Do the attention operation
-        null_text_image_attn = F.scaled_dot_product_attention(
-            null_text_image_q, 
-            null_text_image_k, 
-            null_text_image_v
-        )
-        # Separate the null text and image attentions
-        null_txt_attn = null_text_image_attn[:, :, :null_txt.shape[1]]
-        img_null_txt_attn = null_text_image_attn[:, :, null_txt.shape[1]:]
         # Rearrange the attention tensors
         txt_attn = einops.rearrange(txt_attn, "B H L D -> B L (H D)")
 
@@ -252,7 +227,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
             self.image_output_vectors.append(
                 img_attn.detach().cpu()
             )
-        null_txt_attn = einops.rearrange(null_txt_attn, "B H L D -> B L (H D)")
         # Compute and save concept heatmap
         combined_q = torch.cat((concept_q, img_q), dim=2)
         combined_k = torch.cat((concept_k, img_k), dim=2)
@@ -275,9 +249,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
         txt = txt + txt_mod2.gate * self.txt_mlp((1 + txt_mod2.scale) * self.txt_norm2(txt) + txt_mod2.shift)
         # Calculate the concept blocks
         concepts = concepts + concept_mod1.gate * self.txt_attn.proj(concept_attn)
-        concepts = concepts + concept_mod2.gate * self.txt_mlp((1 + concept_mod2.scale) * self.txt_norm2(concepts) + concept_mod2.shift) 
-        # Calculate the null block updates
-        null_txt = null_txt + null_txt_mod1.gate * self.txt_attn.proj(null_txt_attn)
-        null_txt = null_txt + null_txt_mod2.gate * self.txt_mlp((1 + null_txt_mod2.scale) * self.txt_norm2(null_txt) + null_txt_mod2.shift)
+        concepts = concepts + concept_mod2.gate * self.txt_mlp((1 + concept_mod2.scale) * self.txt_norm2(concepts) + concept_mod2.shift)
 
-        return img, txt, concepts, null_txt
+        return img, txt, concepts

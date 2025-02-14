@@ -56,22 +56,12 @@ def prepare(t5: HFEmbedder, clip: HFEmbedder, img: Tensor, prompt: str | list[st
     if vec.shape[0] == 1 and bs > 1:
         vec = repeat(vec, "1 ... -> bs ...", bs=bs)
 
-    # Encode null text to t5
-    null_txt = t5("")
-    if null_txt.shape[0] == 1 and bs > 1:
-        null_txt = repeat(null_txt, "1 ... -> bs ...", bs=bs)
-    null_txt_ids = torch.zeros(bs, null_txt.shape[1], 3)
-    null_vec = clip("")
-
     return {
         "img": img,
         "img_ids": img_ids.to(img.device),
         "txt": txt.to(img.device),
         "txt_ids": txt_ids.to(img.device),
         "vec": vec.to(img.device),
-        "null_txt": null_txt.to(img.device),
-        "null_txt_vec": null_vec.to(img.device),
-        "null_txt_ids": null_txt_ids.to(img.device),
     }
 
 def time_shift(mu: float, sigma: float, t: Tensor):
