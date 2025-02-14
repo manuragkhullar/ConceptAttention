@@ -33,6 +33,7 @@ if __name__ == "__main__":
         layers=layers,
         num_samples=5
     )
+    coefficients = coefficients[0]
 
     # Plot the coefficients
     vmin = coefficients.min()

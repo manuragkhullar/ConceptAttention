@@ -66,7 +66,7 @@ class RawCrossAttentionBaseline():
         if layers is None:
             layers = list(range(19))
         # Run the image generator
-        image = self.generator.generate_image(
+        image, cross_attention_maps, _ = self.generator.generate_image(
             width=1024,
             height=1024,
             num_steps=num_steps,
@@ -75,18 +75,6 @@ class RawCrossAttentionBaseline():
             prompt=prompt,
             concepts=concepts
         )
-        # Pull out and average the attention maps
-        cross_attention_maps = []
-        for double_block in self.generator.model.double_blocks:
-            concept_cross_attention = torch.stack(
-                double_block.concept_heatmaps
-            ).squeeze(1)
-            # Clear out the layer (always same)
-            double_block.clear_cached_vectors()
-            # Append to the list
-            cross_attention_maps.append(concept_cross_attention)
-        # Stack layers
-        cross_attention_maps = torch.stack(cross_attention_maps).to(torch.float32)
         # Do softmax
         if softmax:
             cross_attention_maps = torch.nn.functional.softmax(cross_attention_maps, dim=-2)
@@ -204,7 +192,7 @@ class RawCrossAttentionSegmentationModel(SegmentationAbstractClass):
             t_curr = timesteps[0]
             t_prev = timesteps[1]
             t_vec = torch.full((encoded_image.shape[0],), t_curr, dtype=encoded_image.dtype, device=encoded_image.device)
-            pred = self.generator.model(
+            pred, concept_cross_attentions, _ = self.generator.model(
                 img=inp["img"],
                 img_ids=inp["img_ids"],
                 txt=inp["txt"],
@@ -242,19 +230,8 @@ class RawCrossAttentionSegmentationModel(SegmentationAbstractClass):
             torch.cuda.empty_cache()
             self.generator.ae.decoder.to(device)
 
-        # Pull out the concept basis and image queries
-        concept_cross_attentions = []
-        for double_block in self.generator.model.double_blocks:
-            # Target space is the cross attention space
-            concept_cross_attention = torch.stack(
-                double_block.concept_heatmaps
-            ).squeeze(1) 
-            # Clear out the layer (always same)
-            double_block.clear_cached_vectors()
-            # Add to list
-            concept_cross_attentions.append(concept_cross_attention)
         # Stack layers
-        concept_cross_attentions = torch.stack(concept_cross_attentions).to(torch.float32)
+        concept_cross_attentions = concept_cross_atentions.to(torch.float32)
         # Apply linear normalization to concepts
         if normalize_concepts:
             concept_vectors = linear_normalization(concept_vectors, dim=-2)

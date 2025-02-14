@@ -72,10 +72,6 @@ class ModifiedFluxDiT(nn.Module):
 
         self.final_layer = LastLayer(self.hidden_size, 1, self.out_channels)
 
-    def clear_cached_vectors(self):
-        for block in self.double_blocks:
-            block.clear_cached_vectors()
-
     def forward(
         self,
         img: Tensor,
@@ -123,8 +119,10 @@ class ModifiedFluxDiT(nn.Module):
         concept_vec = concept_vec + self.vector_in(original_concept_vec)
         concepts = self.txt_in(concepts)
         ############## Modify the double blocks to also return concept vectors ##############
+        all_cross_attention_maps = []
+        all_concept_attention_maps = []
         for block in self.double_blocks:
-            img, txt, concepts = block(
+            img, txt, concepts, cross_attention_maps, concept_attention_maps = block(
                 img=img, 
                 txt=txt, 
                 vec=vec, 
@@ -136,13 +134,18 @@ class ModifiedFluxDiT(nn.Module):
                 iteration=iteration,
                 joint_attention_kwargs=joint_attention_kwargs
             )
+            all_cross_attention_maps.append(cross_attention_maps)
+            all_concept_attention_maps.append(concept_attention_maps)   
+        
+        all_concept_attention_maps = torch.stack(all_concept_attention_maps, dim=0)
+        all_cross_attention_maps = torch.stack(all_cross_attention_maps, dim=0)
         #####################################################################################
 
         img = torch.cat((txt, img), 1)
         
+        # Speed up segmentation by not generating the full image
         if stop_after_multimodal_attentions:
-            # TODO: Maybe return something else here?
-            return None
+            return None, all_cross_attention_maps, all_concept_attention_maps
 
         # Do the single blocks now
         for block in self.single_blocks:
@@ -151,4 +154,4 @@ class ModifiedFluxDiT(nn.Module):
         img = img[:, txt.shape[1] :, ...]
 
         img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
-        return img
+        return img, all_cross_attention_maps, all_concept_attention_maps

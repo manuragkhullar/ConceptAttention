@@ -65,36 +65,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
             nn.GELU(approximate="tanh"),
             nn.Linear(mlp_hidden_dim, hidden_size, bias=True),
         )
-        # Store information needed for visualization
-        self.concept_key_vectors = []
-        self.image_key_vectors = []
-        self.concept_query_vectors = []
-        self.image_query_vectors = []
-        self.concept_value_vectors = []
-        self.image_value_vectors = []
-        self.image_output_vectors = []
-        self.concept_output_vectors = []
-        self.concept_heatmaps = []
-        self.cross_attention_maps = []
-        self.text_value_vectors = []
-        self.text_query_vectors = []
-        self.text_key_vectors = []
-
-    def clear_cached_vectors(self):
-        """Clear out cached vectors"""
-        self.concept_key_vectors = []
-        self.image_key_vectors = []
-        self.concept_query_vectors = []
-        self.image_query_vectors = []
-        self.concept_value_vectors = []
-        self.image_value_vectors = []
-        self.image_output_vectors = []
-        self.text_query_vectors = []
-        self.text_key_vectors = []
-        self.text_value_vectors = []
-        self.concept_output_vectors = []
-        self.concept_heatmaps = []
-        self.cross_attention_maps = []
 
     @torch.no_grad()
     def forward(
@@ -131,16 +101,6 @@ class ModifiedDoubleStreamBlock(nn.Module):
         concept_qkv = self.txt_attn.qkv(concept_modulated)
         concept_q, concept_k, concept_v = einops.rearrange(concept_qkv, "B L (K H D) -> K B H L D", K=3, H=self.num_heads)
         concept_q, concept_k = self.txt_attn.norm(concept_q, concept_k, concept_v)
-        # Save concept key vectors
-        self.concept_key_vectors.append(concept_k.detach().cpu())
-        self.concept_query_vectors.append(concept_q.detach().cpu())
-        self.concept_value_vectors.append(concept_v.detach().cpu())
-        self.image_key_vectors.append(img_k.detach().cpu())
-        self.image_query_vectors.append(img_q.detach().cpu())
-        self.image_value_vectors.append(img_v.detach().cpu())
-        self.text_key_vectors.append(txt_k.detach().cpu())
-        self.text_query_vectors.append(txt_q.detach().cpu())
-        self.text_value_vectors.append(txt_v.detach().cpu())
         ########## Do the text-image joint attention ##########
         text_image_q = torch.cat((txt_q, img_q), dim=2)
         text_image_k = torch.cat((txt_k, img_k), dim=2)
@@ -208,36 +168,25 @@ class ModifiedDoubleStreamBlock(nn.Module):
 
         # Rearrange the attention tensors
         txt_attn = einops.rearrange(txt_attn, "B H L D -> B L (H D)")
-
         if joint_attention_kwargs is not None and joint_attention_kwargs.get("keep_head_dim", False):
-            self.concept_output_vectors.append(
-                concept_attn.detach().cpu()
-            )
-            self.image_output_vectors.append(
-                img_attn.detach().cpu()
-            )
             concept_attn = einops.rearrange(concept_attn, "B H L D -> B L (H D)")
             img_attn = einops.rearrange(img_attn, "B H L D -> B L (H D)")
         else:
             concept_attn = einops.rearrange(concept_attn, "B H L D -> B L (H D)")
             img_attn = einops.rearrange(img_attn, "B H L D -> B L (H D)")
-            self.concept_output_vectors.append(
-                concept_attn.detach().cpu()
-            )
-            self.image_output_vectors.append(
-                img_attn.detach().cpu()
-            )
-        # Compute and save concept heatmap
-        combined_q = torch.cat((concept_q, img_q), dim=2)
-        combined_k = torch.cat((concept_k, img_k), dim=2)
-        concept_heatmap = einops.einsum(
-            combined_q, 
-            combined_k,
-            "B H L_1 D, B H L_2 D -> B H L_2 L_1"
+
+        # Compute the cross attentions
+        cross_attention_maps = einops.einsum(
+            concept_q,
+            img_q,
+            "batch head concepts dim, batch had patches dim -> batch head concepts patches"
         )
-        concept_heatmap = concept_heatmap[:, :, :concepts.shape[1], concepts.shape[1]:]
-        self.concept_heatmaps.append(
-            concept_heatmap.detach().cpu()
+        cross_attention_maps = einops.reduce(cross_attention_maps, "batch head concepts patches -> batch concepts patches", reduction="mean")
+        # Compute the concept attentions
+        concept_attention_maps = einops.einsum(
+            concept_attn,
+            img_attn,
+            "batch concepts dim, batch patches dim -> batch concepts patches"
         )
         # Do the block updates
         # Calculate the img blocks
@@ -251,4 +200,4 @@ class ModifiedDoubleStreamBlock(nn.Module):
         concepts = concepts + concept_mod1.gate * self.txt_attn.proj(concept_attn)
         concepts = concepts + concept_mod2.gate * self.txt_mlp((1 + concept_mod2.scale) * self.txt_norm2(concepts) + concept_mod2.shift)
 
-        return img, txt, concepts
+        return img, txt, concepts, cross_attention_maps, concept_attention_maps

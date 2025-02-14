@@ -107,24 +107,18 @@ def denoise(
     concepts: Tensor = None,
     concept_ids: Tensor = None,
     concept_vec: Tensor = None,
-    null_txt_ids: Tensor = None,
-    null_txt_vec: Tensor = None,
-    null_txt: Tensor = None,
-    edit_txt_ids: Tensor = None,
-    edit_txt_vec: Tensor = None,
-    edit_txt: Tensor = None,
     return_intermediate_images=True,
-    edit_metadata=None,
     joint_attention_kwargs=None,
 ):
     intermediate_images = [img]
-    score_deltas = []
+    all_cross_attention_maps = []
+    all_concept_attention_maps = []
     # this is ignored for schnell
     guidance_vec = torch.full((img.shape[0],), guidance, device=img.device, dtype=img.dtype)
     iteration = 0
     for t_curr, t_prev in tqdm(zip(timesteps[:-1], timesteps[1:])):
         t_vec = torch.full((img.shape[0],), t_curr, dtype=img.dtype, device=img.device)
-        pred = model(
+        pred, cross_attention_maps, concept_attention_maps = model(
             img=img,
             img_ids=img_ids,
             txt=txt,
@@ -132,31 +126,25 @@ def denoise(
             concepts=concepts,
             concept_ids=concept_ids,
             concept_vec=concept_vec,
-            null_txt=null_txt,
-            null_txt_ids=null_txt_ids,
-            null_txt_vec=null_txt_vec,
-            edit_txt=edit_txt,
-            edit_txt_ids=edit_txt_ids,
-            edit_txt_vec=edit_txt_vec,
             y=vec,
             timesteps=t_vec,
             guidance=guidance_vec,
-            edit_metadata=edit_metadata,
             iteration=iteration,
             joint_attention_kwargs=joint_attention_kwargs
         )
-
-        # Save the image score delta
-        score_delta = (t_prev - t_curr) * pred
-        score_delta = torch.norm(score_delta, p=2, dim=-1)
-        score_deltas.append(score_delta)
 
         img = img + (t_prev - t_curr) * pred
         intermediate_images.append(img)
         # increment iteration
         iteration += 1
 
-    return img, intermediate_images, score_deltas
+        all_cross_attention_maps.append(cross_attention_maps)
+        all_concept_attention_maps.append(concept_attention_maps)
+
+    all_cross_attention_maps = torch.stack(all_cross_attention_maps, dim=0)
+    all_concept_attention_maps = torch.stack(all_concept_attention_maps, dim=0)
+
+    return img, intermediate_images, all_cross_attention_maps, all_concept_attention_maps
 
 def unpack(x: Tensor, height: int, width: int) -> Tensor:
     return rearrange(

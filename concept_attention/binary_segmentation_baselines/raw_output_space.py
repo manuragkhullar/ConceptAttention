@@ -161,7 +161,6 @@ class RawOutputSpaceSegmentationModel(SegmentationAbstractClass):
         height: int = 1024,
         stop_after_multimodal_attentions: bool = True,
         layers: list[int] = list(range(19)),
-        timesteps: list[int] = [-1],
         normalize_concepts=True,
         softmax: bool = False,
         joint_attention_kwargs=None,
@@ -178,6 +177,7 @@ class RawOutputSpaceSegmentationModel(SegmentationAbstractClass):
             device=device,
         )
         # Do N trials
+        all_concept_heatmaps = []
         for i in range(num_samples):
             # Add noise to image
             encoded_image, timesteps = add_noise_to_image(
@@ -216,7 +216,7 @@ class RawOutputSpaceSegmentationModel(SegmentationAbstractClass):
             t_curr = timesteps[0]
             t_prev = timesteps[1]
             t_vec = torch.full((encoded_image.shape[0],), t_curr, dtype=encoded_image.dtype, device=encoded_image.device)
-            pred = self.generator.model(
+            pred, _, concept_heatmaps = self.generator.model(
                 img=inp["img"],
                 img_ids=inp["img_ids"],
                 txt=inp["txt"],
@@ -230,6 +230,10 @@ class RawOutputSpaceSegmentationModel(SegmentationAbstractClass):
                 stop_after_multimodal_attentions=stop_after_multimodal_attentions,
                 joint_attention_kwargs=joint_attention_kwargs,
             )
+
+            all_concept_heatmaps.append(concept_heatmaps)
+
+        all_concept_heatmaps = torch.stack(all_concept_heatmaps, dim=0)
 
         if not stop_after_multimodal_attentions:
             img = inp["img"] + (t_prev - t_curr) * pred
@@ -254,69 +258,31 @@ class RawOutputSpaceSegmentationModel(SegmentationAbstractClass):
             torch.cuda.empty_cache()
             self.generator.ae.decoder.to(device)
 
-        # Pull out the concept basis and image queries
-        concept_vectors = []
-        image_vectors = []
-        for double_block in self.generator.model.double_blocks:
-            # Target space is the cross attention space 
-            image_vecs = torch.stack(
-                double_block.image_output_vectors
-            ).squeeze(1)
-            concept_vecs = torch.stack(
-                double_block.concept_output_vectors
-            ).squeeze(1)
-            # Clear out the layer (always same)
-            double_block.clear_cached_vectors()
-            # Add to list
-            concept_vectors.append(concept_vecs)
-            image_vectors.append(image_vecs)
-        # Stack layers
-        concept_vectors = torch.stack(concept_vectors).to(torch.float32)
-        image_vectors = torch.stack(image_vectors).to(torch.float32)
 
-        if layers is not None:
-            # Pull out the layer index
-            concept_vectors = concept_vectors[layers]
-            image_vectors = image_vectors[layers]
+        # if layers is not None:
+        #     # Pull out the layer index
+        #     concept_vectors = concept_vectors[layers]
+        #     image_vectors = image_vectors[layers]
 
         # Apply linear normalization to concepts
-        if normalize_concepts:
-            concept_vectors = linear_normalization(concept_vectors, dim=-2)
+        # if normalize_concepts:
+        #     concept_vectors = linear_normalization(concept_vectors, dim=-2)
 
-        # Check if keep_head_dim is set
-        if joint_attention_kwargs is not None and joint_attention_kwargs.get("keep_head_dim", False):
-            concept_heatmaps = einops.einsum(
-                concept_vectors,
-                image_vectors,
-                "layers timesteps heads concepts dims, layers timesteps heads pixels dims -> layers timesteps heads concepts pixels"
-            )
-            if softmax:
-                concept_heatmaps = torch.nn.functional.softmax(concept_heatmaps, dim=-2)
-            concept_heatmaps = einops.reduce(
-                concept_heatmaps,
-                "layers timesteps heads concepts pixels -> concepts pixels",
-                reduction="mean"
-            )
-        else:
-            # Now compute the heatmap
-            concept_heatmaps = einops.einsum(
-                concept_vectors,
-                image_vectors,
-                "layers timesteps concepts dims, layers timesteps pixels dims -> layers timesteps concepts pixels"
-            )
+        # Apply softmax
+        if softmax:
+            all_concept_heatmaps = torch.nn.functional.softmax(all_concept_heatmaps, dim=-2)
 
-            if softmax:
-                concept_heatmaps = torch.nn.functional.softmax(concept_heatmaps, dim=-2)
-
-            concept_heatmaps = einops.reduce(
-                concept_heatmaps,
-                "layers timesteps concepts pixels -> concepts pixels",
-                reduction="mean"
-            )
-            
+        concept_heatmaps = all_concept_heatmaps[:, layers]
+        concept_heatmaps = einops.reduce(
+            concept_heatmaps,
+            "samples layers batch concepts patches -> batch concepts patches",
+            reduction="mean"
+        )
+        # Convert to torch float32
+        concept_heatmaps = concept_heatmaps.to(torch.float32)
         concept_heatmaps = einops.rearrange(
             concept_heatmaps,
-            "concepts (h w) -> concepts h w",
+            "batch concepts (h w) -> batch concepts h w",
             h=64,
             w=64
         )

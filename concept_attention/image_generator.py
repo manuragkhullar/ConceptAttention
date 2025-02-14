@@ -83,10 +83,7 @@ class FluxGenerator():
             attention_block_class=attention_block_class,
             dit_class=dit_class
         )
-
-    def clear_cached_vectors(self):
-        self.model.clear_cached_vectors()
-
+        
     @torch.inference_mode()
     def generate_image(
         self,
@@ -103,8 +100,6 @@ class FluxGenerator():
         restrict_clip_guidance=False,
         edit_metadata=None,
         joint_attention_kwargs=None,
-        return_score_deltas=False,
-        return_concept_heatmaps=False
     ):
         seed = int(seed)
         if seed == -1:
@@ -177,7 +172,7 @@ class FluxGenerator():
             torch.cuda.empty_cache()
             self.model = self.model.to(self.device)
         # denoise initial noise
-        x, intermediate_images, score_deltas = denoise(
+        x, intermediate_images, cross_attention_maps, concept_attention_maps = denoise(
             self.model, 
             **inp, 
             timesteps=timesteps, 
@@ -210,10 +205,4 @@ class FluxGenerator():
 
         img = Image.fromarray((127.5 * (x + 1.0)).cpu().byte().numpy())
 
-        if return_score_deltas:
-            return img, score_deltas
-
-        if return_concept_heatmaps:
-            return img, concept_heatmaps
-        
-        return img
+        return img, cross_attention_maps, concept_attention_maps
