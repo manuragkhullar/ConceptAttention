@@ -137,7 +137,7 @@ class ConceptAttentionFluxPipeline():
             height=height,
             width=width
         )
-        concept_heatmaps = concept_heatmaps.detach().cpu().numpy()
+        concept_heatmaps = concept_heatmaps.detach().cpu().numpy().squeeze()
        
         # Convert the torch heatmaps to PIL images. 
         if return_pil_heatmaps:
