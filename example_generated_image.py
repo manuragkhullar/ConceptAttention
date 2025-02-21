@@ -15,7 +15,7 @@ pipeline_output = pipeline.generate_image(
     prompt=prompt,
     concepts=concepts,
     width=1024,
-    height=1024,
+    height=1024
 )
 
 image = pipeline_output.image

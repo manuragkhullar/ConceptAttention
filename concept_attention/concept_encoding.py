@@ -33,7 +33,7 @@ def generate_concept_basis_and_image_queries(
             offload=offload,
         )
 
-    image = generator.generate_image(
+    image, cross_attention_maps, concept_attention_maps = generator.generate_image(
         width=1024,
         height=1024,
         num_steps=num_steps,

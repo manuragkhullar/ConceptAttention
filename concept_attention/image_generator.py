@@ -98,7 +98,6 @@ class FluxGenerator():
         image2image_strength=0.0,
         add_sampling_metadata=True,
         restrict_clip_guidance=False,
-        edit_metadata=None,
         joint_attention_kwargs=None,
     ):
         seed = int(seed)
@@ -177,7 +176,6 @@ class FluxGenerator():
             **inp, 
             timesteps=timesteps, 
             guidance=opts.guidance, 
-            edit_metadata=edit_metadata,
             joint_attention_kwargs=joint_attention_kwargs
         )
         # offload model, load autoencoder to gpu

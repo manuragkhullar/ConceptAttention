@@ -45,8 +45,8 @@ class RawCrossAttentionBaseline():
         concepts,
         seed=4,
         num_steps=4,
-        timesteps=None,
-        layers=None,
+        timesteps: list[int] = list(range(2, 4)),
+        layers: list[int] = list(range(10, 19)),
         softmax=False
     ):
         """
@@ -78,10 +78,10 @@ class RawCrossAttentionBaseline():
         # Do softmax
         if softmax:
             cross_attention_maps = torch.nn.functional.softmax(cross_attention_maps, dim=-2)
-        # Pull out the desired timesteps
-        cross_attention_maps = cross_attention_maps[:, timesteps]
         # Pull out the desired layers
-        cross_attention_maps = cross_attention_maps[layers]
+        concept_attention_maps = concept_attention_maps[:, layers]
+        # Pull out the desired timesteps
+        concept_attention_maps = concept_attention_maps[timesteps]
         # AVerage over the layers, time heads
         cross_attention_maps = einops.reduce(
             cross_attention_maps,
@@ -95,9 +95,6 @@ class RawCrossAttentionBaseline():
             h=64,
             w=64
         )
-        # Softmax
-        if softmax:
-            cross_attention_maps = torch.nn.functional.softmax(cross_attention_maps, dim=0)
 
         return cross_attention_maps, image
 
@@ -231,7 +228,7 @@ class RawCrossAttentionSegmentationModel(SegmentationAbstractClass):
             self.generator.ae.decoder.to(device)
 
         # Stack layers
-        concept_cross_attentions = concept_cross_atentions.to(torch.float32)
+        concept_cross_attentions = concept_cross_attentions.to(torch.float32)
         # Apply linear normalization to concepts
         if normalize_concepts:
             concept_vectors = linear_normalization(concept_vectors, dim=-2)

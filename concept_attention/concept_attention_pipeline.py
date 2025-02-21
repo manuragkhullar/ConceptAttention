@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import PIL
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
 
 from concept_attention.binary_segmentation_baselines.raw_cross_attention import RawCrossAttentionBaseline, RawCrossAttentionSegmentationModel
 from concept_attention.binary_segmentation_baselines.raw_output_space import RawOutputSpaceBaseline, RawOutputSpaceSegmentationModel
@@ -83,12 +84,9 @@ class ConceptAttentionFluxPipeline():
             timesteps=timesteps,
             layers=layer_indices,
             softmax=softmax,
-            height=width,
-            width=width,
-            guidance=guidance,
         )
         # Convert to numpy 
-        concept_heatmaps = concept_heatmaps.detach().cpu().numpy()
+        concept_heatmaps = concept_heatmaps.to(torch.float32).detach().cpu().numpy()
         # Convert the torch heatmaps to PIL images.
         if return_pil_heatmaps:
             # Convert to a matplotlib color scheme
