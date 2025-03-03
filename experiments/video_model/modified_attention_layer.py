@@ -1,19 +1,19 @@
 
 from typing import Any, Dict, Optional, Tuple, Union
+import einops
 
 import torch
 from torch import nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
-from diffusers.transformers.attention import Attention, FeedForward
-from diffusers.transformers.attention_processor import AttentionProcessor, CogVideoXAttnProcessor2_0, FusedCogVideoXAttnProcessor2_0
-from diffusers.transformers.embeddings import CogVideoXPatchEmbed, TimestepEmbedding, Timesteps
-from diffusers.transformers.modeling_outputs import Transformer2DModelOutput
-from diffusers.transformers.modeling_utils import ModelMixin
-from diffusers.transformers.normalization import AdaLayerNorm, CogVideoXLayerNormZero
+from diffusers.models.attention import Attention, FeedForward
+from diffusers.models.attention_processor import AttentionProcessor, CogVideoXAttnProcessor2_0, FusedCogVideoXAttnProcessor2_0
+from diffusers.models.embeddings import CogVideoXPatchEmbed, TimestepEmbedding, Timesteps
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.models.normalization import AdaLayerNorm, CogVideoXLayerNormZero
 
 
 # @maybe_allow_in_graph
@@ -97,10 +97,12 @@ class ModifiedCogVideoXBlock(nn.Module):
             bias=ff_bias,
         )
 
+    @torch.no_grad()
     def forward(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
+        concept_hidden_states: torch.Tensor,
         temb: torch.Tensor,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
@@ -111,12 +113,57 @@ class ModifiedCogVideoXBlock(nn.Module):
             hidden_states, encoder_hidden_states, temb
         )
 
+        ################## Concept Attention ##################
+
+        _, norm_concept_hidden_states, _, concept_gate_msa = self.norm1(
+            hidden_states, concept_hidden_states, temb
+        )
+
+        # Concept attention
+        _, attn_concept_hidden_states = self.attn1(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_concept_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+        )
+
+        concept_hidden_states = concept_hidden_states + concept_gate_msa * attn_concept_hidden_states
+
+        _, norm_concept_hidden_states, _, concept_gate_ff = self.norm2(
+            hidden_states, concept_hidden_states, temb
+        )
+
+        concept_ff_output = self.ff(norm_concept_hidden_states)
+
+        concept_hidden_states = concept_hidden_states + concept_gate_ff * concept_ff_output
+
+        del concept_ff_output
+        del norm_concept_hidden_states
+        ####################################################
+
         # attention
         attn_hidden_states, attn_encoder_hidden_states = self.attn1(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
             image_rotary_emb=image_rotary_emb,
         )
+        #### concept attention projection #########
+        # Do the concept attention projection here and store it in the concept attention dict
+        concept_attention_maps = einops.einsum(
+            attn_hidden_states,
+            attn_concept_hidden_states,
+            "batch num_patch dim, batch concepts dim -> batch concepts num_patch"
+        )
+
+        del attn_concept_hidden_states
+
+        concept_attention_maps = concept_attention_maps.cpu()[0]
+
+        concept_attention_dict = {
+            "concept_attention_maps": concept_attention_maps
+        }
+        ############################
+
+        # Now do the normal attention
 
         hidden_states = hidden_states + gate_msa * attn_hidden_states
         encoder_hidden_states = encoder_hidden_states + enc_gate_msa * attn_encoder_hidden_states
@@ -125,12 +172,13 @@ class ModifiedCogVideoXBlock(nn.Module):
         norm_hidden_states, norm_encoder_hidden_states, gate_ff, enc_gate_ff = self.norm2(
             hidden_states, encoder_hidden_states, temb
         )
-
+     
         # feed-forward
         norm_hidden_states = torch.cat([norm_encoder_hidden_states, norm_hidden_states], dim=1)
         ff_output = self.ff(norm_hidden_states)
 
+       
         hidden_states = hidden_states + gate_ff * ff_output[:, text_seq_length:]
         encoder_hidden_states = encoder_hidden_states + enc_gate_ff * ff_output[:, :text_seq_length]
 
-        return hidden_states, encoder_hidden_states
+        return hidden_states, encoder_hidden_states, concept_hidden_states, concept_attention_dict

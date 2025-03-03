@@ -2,30 +2,80 @@
     Load the cogvideo model. 
 """
 import torch
-
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 from diffusers import CogVideoXPipeline
 from diffusers.utils import export_to_video
 
 from modified_dit import ModifiedCogVideoXTransformer3DModel
+from pipeline import ModifiedCogVideoXPipeline
+
+def make_concept_attention_video(concepts, concept_attention_maps):
+    """
+        For each concept, create a video using matplotlib where each frame is displayed as a heatmap.
+
+        Inputs:
+            concepts: List[str]
+            concept_attention_maps: torch.Tensor of shape (num_concepts, num_frames, height, width)
+    """
+    num_concepts, num_frames, height, width = concept_attention_maps.shape
+
+    fig, axes = plt.subplots(1, num_concepts, figsize=(len(concepts) * 7, 5))
+    if num_concepts == 1:
+        axes = [axes]
+
+    def update(frame):
+        for i, ax in enumerate(axes):
+            ax.clear()
+            ax.set_title(concepts[i])
+            heatmap = concept_attention_maps[i, frame, :, :].cpu().numpy()
+            ax.imshow(
+                heatmap, 
+                cmap='inferno', 
+                interpolation='nearest',
+                vmin=concept_attention_maps.min(),
+                vmax=concept_attention_maps.max()
+            )
+
+    ani = animation.FuncAnimation(fig, update, frames=num_frames, repeat=False)
+    ani.save('results/concept_attention_video.mp4', writer='ffmpeg', fps=2)
 
 if __name__ == "__main__":
+    transformer = ModifiedCogVideoXTransformer3DModel.from_pretrained(
+        "THUDM/CogVideoX-2b",
+        subfolder="transformer",
+        torch_dtype=torch.float16
+    )
 
-    # modified_dit = ModifiedCogVideoXTransformer3DModel.from_pretrained(
-    #     "THUDM/CogVideoX-2b"
-    # )
-
-    # Models: "THUDM/CogVideoX-2b" or "THUDM/CogVideoX-5b"
-    pipe = CogVideoXPipeline.from_pretrained(
+    pipe = ModifiedCogVideoXPipeline.from_pretrained(
         "THUDM/CogVideoX-2b", 
-        torch_dtype=torch.bfloat16
-    ).to("cuda")
+        transformer=transformer,
+        torch_dtype=torch.float16
+    )
 
-    prompt = "A panda, dressed in a small, red jacket and a tiny hat, sits on a wooden stool in a serene bamboo forest. "
-        # "The panda's fluffy paws strum a miniature acoustic guitar, producing soft, melodic tunes. Nearby, a few other "
-        # "pandas gather, watching curiously and some clapping in rhythm. Sunlight filters through the tall bamboo, "
-        # "casting a gentle glow on the scene. The panda's face is expressive, showing concentration and joy as it plays. "
-        # "The background includes a small, flowing stream and vibrant green foliage, enhancing the peaceful and magical "
-        # "atmosphere of this unique musical performance."
-    # )
-    video = pipe(prompt=prompt, guidance_scale=6.0, num_inference_steps=50).frames[0]
-    export_to_video(video, "results/output.mp4", fps=8)
+    pipe.enable_sequential_cpu_offload()
+    pipe.vae.enable_slicing()
+    pipe.vae.enable_tiling()
+
+    prompt = "A golden retriever dog running in a grassy park. Trees in the background. Blue sky as well."
+    
+    concepts = ["dog", "grass", "sky", "tree"]
+    video, concept_attention_dict = pipe(
+        prompt=prompt, 
+        concepts=concepts,
+        guidance_scale=6, 
+        use_dynamic_cfg=True, 
+        num_inference_steps=50,
+        concept_attention_kwargs= {
+            "timesteps": list(range(0, 50)),
+            "layers": list(range(0, 30)),
+        }
+    )
+    video = video.frames[0]
+
+    print(concept_attention_dict["concept_attention_maps"].shape)
+
+    concept_attention_maps = concept_attention_dict["concept_attention_maps"]
+    make_concept_attention_video(concepts, concept_attention_maps)
+
+    export_to_video(video, "results/output.mp4", fps=4)

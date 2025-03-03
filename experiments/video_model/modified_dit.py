@@ -14,6 +14,8 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNorm, CogVideoXLayerNormZero
 
+from modified_attention_layer import ModifiedCogVideoXBlock
+
 
 class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     """
@@ -151,7 +153,7 @@ class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMi
         # 3. Define spatio-temporal transformers blocks
         self.transformer_blocks = nn.ModuleList(
             [
-                CogVideoXBlock(
+                ModifiedCogVideoXBlock(
                     dim=inner_dim,
                     num_attention_heads=num_attention_heads,
                     attention_head_dim=attention_head_dim,
@@ -290,11 +292,13 @@ class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMi
         if self.original_attn_processors is not None:
             self.set_attn_processor(self.original_attn_processors)
 
+    @torch.no_grad()
     def forward(
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: Union[int, float, torch.LongTensor],
+        concept_hidden_states: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,
         ofs: Optional[Union[int, float, torch.LongTensor]] = None,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
@@ -335,12 +339,21 @@ class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMi
             emb = emb + ofs_emb
 
         # 2. Patch embedding
+        num_concepts = concept_hidden_states.shape[1] if concept_hidden_states is not None else 0
+        combined_hidden_states = self.patch_embed(concept_hidden_states, hidden_states)
+        combined_hidden_states = self.embedding_dropout(combined_hidden_states)
+        concept_hidden_states = combined_hidden_states[:, :num_concepts]
+
         hidden_states = self.patch_embed(encoder_hidden_states, hidden_states)
         hidden_states = self.embedding_dropout(hidden_states)
 
         text_seq_length = encoder_hidden_states.shape[1]
         encoder_hidden_states = hidden_states[:, :text_seq_length]
         hidden_states = hidden_states[:, text_seq_length:]
+
+        concept_attention_dict = {
+            "concept_attention_maps": []
+        }
 
         # 3. Transformer blocks
         for i, block in enumerate(self.transformer_blocks):
@@ -353,21 +366,29 @@ class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMi
                     return custom_forward
 
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                hidden_states, encoder_hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states, encoder_hidden_states, concept_hidden_states, current_concept_attention_dict = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
+                    concept_hidden_states,
                     emb,
                     image_rotary_emb,
                     **ckpt_kwargs,
                 )
             else:
-                hidden_states, encoder_hidden_states = block(
+                hidden_states, encoder_hidden_states, concept_hidden_states, current_concept_attention_dict = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
+                    concept_hidden_states=concept_hidden_states,
                     temb=emb,
                     image_rotary_emb=image_rotary_emb,
                 )
+
+            for key in current_concept_attention_dict:
+                concept_attention_dict[key].append(current_concept_attention_dict[key])
+
+        for key in concept_attention_dict:
+            concept_attention_dict[key] = torch.stack(concept_attention_dict[key], dim=1)
 
         if not self.config.use_rotary_positional_embeddings:
             # CogVideoX-2B
@@ -400,5 +421,6 @@ class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMi
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
-            return (output,)
-        return Transformer2DModelOutput(sample=output)
+            return (output, concept_attention_dict)
+        
+        return Transformer2DModelOutput(sample=output), concept_attention_dict
