@@ -108,18 +108,18 @@ class CustomCogVideoXAttnProcessor2_0:
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         concept_hidden_states = attn_concept_hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         # ########## Concept Attention Projection ##########
-        # # Pull out the hidden states for the image patches 
-        # image_hidden_states = hidden_states[:, text_seq_length:]
-        # # Do the concept attention projections
-        # concept_attention_maps = einops.einsum(
-        #     concept_hidden_states,
-        #     image_hidden_states,
-        #     "batch concepts dim, batch patches dim -> batch concepts patches"
-        # ).detach().cpu()
-        # # Save the info
-        # concept_attention_dict = {
-        #     "concept_attention_maps": concept_attention_maps
-        # }
+        # Pull out the hidden states for the image patches 
+        image_hidden_states = hidden_states[:, text_seq_length:]
+        # Do the concept attention projections
+        concept_attention_maps = einops.einsum(
+            concept_hidden_states,
+            image_hidden_states,
+            "batch concepts dim, batch patches dim -> batch concepts patches"
+        ).detach().cpu()
+        # Save the info
+        concept_attention_dict = {
+            "concept_attention_maps": concept_attention_maps
+        }
         # #############################################
 
         # linear proj
@@ -133,7 +133,7 @@ class CustomCogVideoXAttnProcessor2_0:
         encoder_hidden_states, hidden_states = hidden_states.split(
             [text_seq_length, hidden_states.size(1) - text_seq_length], dim=1
         )
-        return hidden_states, encoder_hidden_states, concept_hidden_states, {}
+        return hidden_states, encoder_hidden_states, concept_hidden_states, concept_attention_dict
 
 
 # @maybe_allow_in_graph
@@ -248,31 +248,31 @@ class ModifiedCogVideoXBlock(nn.Module):
         )
 
 
-        # del concept_ff_output
-        # del norm_concept_hidden_states
-        # ####################################################
-        # # attention
-        # attn_hidden_states, attn_encoder_hidden_states = self.attn1(
-        #     hidden_states=norm_hidden_states,
-        #     encoder_hidden_states=norm_encoder_hidden_states,
-        #     image_rotary_emb=image_rotary_emb,
+        # # del concept_ff_output
+        # # del norm_concept_hidden_states
+        # # ####################################################
+        # # # attention
+        # # attn_hidden_states, attn_encoder_hidden_states = self.attn1(
+        # #     hidden_states=norm_hidden_states,
+        # #     encoder_hidden_states=norm_encoder_hidden_states,
+        # #     image_rotary_emb=image_rotary_emb,
+        # # )
+        # # #### concept attention projection #########
+        # # # Do the concept attention projection here and store it in the concept attention dict
+        # concept_attention_maps = einops.einsum(
+        #     attn_hidden_states,
+        #     attn_concept_hidden_states,
+        #     "batch num_patch dim, batch concepts dim -> batch concepts num_patch"
         # )
-        # #### concept attention projection #########
-        # # Do the concept attention projection here and store it in the concept attention dict
-        concept_attention_maps = einops.einsum(
-            attn_hidden_states,
-            attn_concept_hidden_states,
-            "batch num_patch dim, batch concepts dim -> batch concepts num_patch"
-        )
 
-        # del attn_concept_hidden_states
+        # # del attn_concept_hidden_states
 
-        # concept_attention_maps = concept_attention_maps[0]
+        # # concept_attention_maps = concept_attention_maps[0]
 
-        concept_attention_dict = {
-            "concept_attention_maps": concept_attention_maps.detach().cpu()
-        }
-        # ############################
+        # concept_attention_dict = {
+        #     "concept_attention_maps": concept_attention_maps.detach().cpu()
+        # }
+        # # ############################
 
         concept_hidden_states = concept_hidden_states + concept_gate_msa * attn_concept_hidden_states
 
