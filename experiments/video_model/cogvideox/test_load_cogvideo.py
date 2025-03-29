@@ -38,15 +38,15 @@ if __name__ == "__main__":
     
     concepts = ["dog", "grass", "sky", "tree"]
     video, concept_attention_dict = pipe(
-        prompt=prompt, 
+        prompt=prompt,
         concepts=concepts,
         num_videos_per_prompt=1,
-        guidance_scale=6, 
+        guidance_scale=6,
         # use_dynamic_cfg=True, 
         num_frames=81,
         num_inference_steps=50,
         # num_frames=81,
-        concept_attention_kwargs= {
+        concept_attention_kwargs={
             "timesteps": list(range(0, 50)),
             "layers": list(range(0, 30)),
         }

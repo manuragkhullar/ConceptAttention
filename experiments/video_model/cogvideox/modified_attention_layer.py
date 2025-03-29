@@ -32,6 +32,7 @@ class CustomCogVideoXAttnProcessor2_0:
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
+        concept_hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -49,6 +50,11 @@ class CustomCogVideoXAttnProcessor2_0:
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
 
+        # Apply k, q, v to concept hidden states
+        concept_query = attn.to_q(concept_hidden_states)
+        concept_key = attn.to_k(concept_hidden_states)
+        concept_value = attn.to_v(concept_hidden_states)
+
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
 
@@ -56,10 +62,17 @@ class CustomCogVideoXAttnProcessor2_0:
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
+        # Reshape concept query, key, value
+        concept_query = concept_query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        concept_key = concept_key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        concept_value = concept_value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
         if attn.norm_q is not None:
             query = attn.norm_q(query)
+            concept_query = attn.norm_q(concept_query)
         if attn.norm_k is not None:
             key = attn.norm_k(key)
+            concept_key = attn.norm_k(concept_key)
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
@@ -73,18 +86,54 @@ class CustomCogVideoXAttnProcessor2_0:
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )
 
+        ###################### Concept Attention Projections ###########################
+        # Package together the concept and image embeddings for attention
+        image_query = query[:, :, text_seq_length:]
+        image_key = key[:, :, text_seq_length:]
+        image_value = value[:, :, text_seq_length:]
+        concept_image_queries = torch.cat([concept_query, image_query], dim=2)
+        concept_image_keys = torch.cat([concept_key, image_key], dim=2)
+        concept_image_values = torch.cat([concept_value, image_value], dim=2)
+        # Apply the attention to the concept and image embeddings
+        concept_attn_hidden_states = F.scaled_dot_product_attention(
+            concept_image_queries, 
+            concept_image_keys, 
+            concept_image_values, 
+            # attn_mask=attention_mask, 
+            dropout_p=0.0
+        )
+        # Pull out just the concept embedding outputs
+        attn_concept_hidden_states = concept_attn_hidden_states[:, :, :concept_hidden_states.size(1)]
+        ################################################################################
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        concept_hidden_states = attn_concept_hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        # ########## Concept Attention Projection ##########
+        # # Pull out the hidden states for the image patches 
+        # image_hidden_states = hidden_states[:, text_seq_length:]
+        # # Do the concept attention projections
+        # concept_attention_maps = einops.einsum(
+        #     concept_hidden_states,
+        #     image_hidden_states,
+        #     "batch concepts dim, batch patches dim -> batch concepts patches"
+        # ).detach().cpu()
+        # # Save the info
+        # concept_attention_dict = {
+        #     "concept_attention_maps": concept_attention_maps
+        # }
+        # #############################################
 
         # linear proj
         hidden_states = attn.to_out[0](hidden_states)
+        concept_hidden_states = attn.to_out[0](concept_hidden_states)
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
+        concept_hidden_states = attn.to_out[1](concept_hidden_states)
+        # Apply 
 
         encoder_hidden_states, hidden_states = hidden_states.split(
             [text_seq_length, hidden_states.size(1) - text_seq_length], dim=1
         )
-        return hidden_states, encoder_hidden_states
-
+        return hidden_states, encoder_hidden_states, concept_hidden_states, {}
 
 
 # @maybe_allow_in_graph
@@ -191,13 +240,43 @@ class ModifiedCogVideoXBlock(nn.Module):
         )
 
         # Concept attention
-        _, attn_concept_hidden_states = self.attn1(
+        attn_hidden_states, attn_encoder_hidden_states, attn_concept_hidden_states, concept_attention_dict = self.attn1(
             hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_concept_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            concept_hidden_states=norm_concept_hidden_states,
             image_rotary_emb=image_rotary_emb,
         )
 
+
+        # del concept_ff_output
+        # del norm_concept_hidden_states
+        # ####################################################
+        # # attention
+        # attn_hidden_states, attn_encoder_hidden_states = self.attn1(
+        #     hidden_states=norm_hidden_states,
+        #     encoder_hidden_states=norm_encoder_hidden_states,
+        #     image_rotary_emb=image_rotary_emb,
+        # )
+        # #### concept attention projection #########
+        # # Do the concept attention projection here and store it in the concept attention dict
+        concept_attention_maps = einops.einsum(
+            attn_hidden_states,
+            attn_concept_hidden_states,
+            "batch num_patch dim, batch concepts dim -> batch concepts num_patch"
+        )
+
+        # del attn_concept_hidden_states
+
+        # concept_attention_maps = concept_attention_maps[0]
+
+        concept_attention_dict = {
+            "concept_attention_maps": concept_attention_maps.detach().cpu()
+        }
+        # ############################
+
         concept_hidden_states = concept_hidden_states + concept_gate_msa * attn_concept_hidden_states
+
+        
 
         _, norm_concept_hidden_states, _, concept_gate_ff = self.norm2(
             hidden_states, concept_hidden_states, temb
@@ -206,33 +285,6 @@ class ModifiedCogVideoXBlock(nn.Module):
         concept_ff_output = self.ff(norm_concept_hidden_states)
 
         concept_hidden_states = concept_hidden_states + concept_gate_ff * concept_ff_output
-
-        del concept_ff_output
-        del norm_concept_hidden_states
-        ####################################################
-
-        # attention
-        attn_hidden_states, attn_encoder_hidden_states = self.attn1(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_encoder_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-        )
-        #### concept attention projection #########
-        # Do the concept attention projection here and store it in the concept attention dict
-        concept_attention_maps = einops.einsum(
-            attn_hidden_states,
-            attn_concept_hidden_states,
-            "batch num_patch dim, batch concepts dim -> batch concepts num_patch"
-        )
-
-        del attn_concept_hidden_states
-
-        concept_attention_maps = concept_attention_maps[0]
-
-        concept_attention_dict = {
-            "concept_attention_maps": concept_attention_maps.detach().cpu()
-        }
-        ############################
 
         # Now do the normal attention
 

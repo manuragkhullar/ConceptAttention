@@ -369,17 +369,20 @@ class ModifiedCogVideoXPipeline(CogVideoXPipeline):
 
         # Reshape the concept attention dict to the correct shape
         concept_attention_dict["concept_attention_maps"] = torch.stack(concept_attention_dict["concept_attention_maps"], dim=0)
+        # Order is (time, batch, layers, concepts, frames * height * width)
+        # Pull out only the positive prompt and embeddings used for CFG
+        concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, 1]
         # Pull ou the timesteps and layers of interest
         concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][concept_attention_kwargs["timesteps"]]
-        concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, :, concept_attention_kwargs["layers"]]
+        concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, concept_attention_kwargs["layers"]]
         # Apply a softmax over the concept dimension
-        concept_attention_dict["concept_attention_maps"] = torch.nn.functional.softmax(concept_attention_dict["concept_attention_maps"], dim=1)
+        concept_attention_dict["concept_attention_maps"] = torch.nn.functional.softmax(concept_attention_dict["concept_attention_maps"], dim=-2)
         # Rearrange the tensor to the correct shape
         grid_height = height // (self.vae_scale_factor_spatial * self.transformer.config.patch_size)
         grid_width = width // (self.vae_scale_factor_spatial * self.transformer.config.patch_size)
         concept_attention_dict["concept_attention_maps"] = einops.rearrange(
             concept_attention_dict["concept_attention_maps"],
-            "steps concepts layers (frames height width) -> steps concepts layers frames height width",
+            "steps layers concepts (frames height width) -> steps concepts layers frames height width",
             frames=latent_frames,
             width=grid_width,
             height=grid_height,
