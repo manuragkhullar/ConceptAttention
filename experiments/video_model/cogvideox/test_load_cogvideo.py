@@ -57,5 +57,9 @@ if __name__ == "__main__":
     make_concept_attention_video(concepts, concept_attention_maps, save_path="results/concept_attention.mp4")
 
     export_to_video(video, "results/output.mov", fps=8)
-
     make_individual_videos(concepts, concept_attention_maps, save_dir="results", fps=8)
+
+    # Now make videos for the cross attentions
+    cross_attention_maps = concept_attention_dict["cross_attention_maps"]
+    make_concept_attention_video(concepts, cross_attention_maps, save_path="results/cross_attention.mp4")
+    make_individual_videos(concepts, cross_attention_maps, save_dir="results/cross_attentions", fps=8)

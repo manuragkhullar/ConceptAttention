@@ -104,6 +104,18 @@ class CustomCogVideoXAttnProcessor2_0:
         )
         # Pull out just the concept embedding outputs
         attn_concept_hidden_states = concept_attn_hidden_states[:, :, :concept_hidden_states.size(1)]
+        ############# Compute Cross Attention Maps ##############
+        cross_attention_maps = einops.einsum(
+            image_query,
+            concept_key,
+            "batch heads patches dim, batch heads concepts dim -> batch heads concepts patches"
+        ).detach().cpu()
+        # Average over the heads
+        cross_attention_maps = einops.reduce(
+            cross_attention_maps,
+            "batch heads concepts patches -> batch concepts patches",
+            "mean"
+        )
         ################################################################################
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         concept_hidden_states = attn_concept_hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
@@ -118,7 +130,8 @@ class CustomCogVideoXAttnProcessor2_0:
         ).detach().cpu()
         # Save the info
         concept_attention_dict = {
-            "concept_attention_maps": concept_attention_maps
+            "concept_attention_maps": concept_attention_maps,
+            "cross_attention_maps": cross_attention_maps,
         }
         # #############################################
 

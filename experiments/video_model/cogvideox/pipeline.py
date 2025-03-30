@@ -296,7 +296,8 @@ class ModifiedCogVideoXPipeline(CogVideoXPipeline):
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
         concept_attention_dict = {
-            "concept_attention_maps": []
+            "concept_attention_maps": [],
+            "cross_attention_maps": [],
         }
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -324,9 +325,10 @@ class ModifiedCogVideoXPipeline(CogVideoXPipeline):
                 )
                 noise_pred = transformer_output[0]
                 current_concept_attention_dict = transformer_output[1]
-                concept_attention_dict["concept_attention_maps"].append(
-                    current_concept_attention_dict["concept_attention_maps"]
-                )
+                for key in current_concept_attention_dict:
+                    if key not in concept_attention_dict:
+                        concept_attention_dict[key] = []
+                    concept_attention_dict[key].append(current_concept_attention_dict[key])
                 noise_pred = noise_pred.float()
 
                 # perform guidance
@@ -367,6 +369,7 @@ class ModifiedCogVideoXPipeline(CogVideoXPipeline):
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
 
+        # Process the concept attention maps
         # Reshape the concept attention dict to the correct shape
         concept_attention_dict["concept_attention_maps"] = torch.stack(concept_attention_dict["concept_attention_maps"], dim=0)
         # Order is (time, batch, layers, concepts, frames * height * width)
@@ -395,6 +398,32 @@ class ModifiedCogVideoXPipeline(CogVideoXPipeline):
         )
         # Pull out only the first len(concept) concept maps
         concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:len(concepts)]
+        # Now process the cross attention maps
+        concept_attention_dict["cross_attention_maps"] = torch.stack(concept_attention_dict["cross_attention_maps"], dim=0)
+        # Order is (time, batch, layers, frames * height * width)
+        # Pull out only the positive prompt and embeddings used for CFG
+        concept_attention_dict["cross_attention_maps"] = concept_attention_dict["cross_attention_maps"][:, 1]
+        # Pull out the timesteps and layers of interest
+        concept_attention_dict["cross_attention_maps"] = concept_attention_dict["cross_attention_maps"][concept_attention_kwargs["timesteps"]]
+        concept_attention_dict["cross_attention_maps"] = concept_attention_dict["cross_attention_maps"][:, concept_attention_kwargs["layers"]]
+        # Apply a softmax over the concept dimension
+        concept_attention_dict["cross_attention_maps"] = torch.nn.functional.softmax(concept_attention_dict["cross_attention_maps"], dim=-2)
+        # Rearrange the tensor to the correct shape
+        concept_attention_dict["cross_attention_maps"] = einops.rearrange(
+            concept_attention_dict["cross_attention_maps"],
+            "steps layers concepts (frames height width) -> steps concepts layers frames height width",
+            frames=latent_frames,
+            width=grid_width,
+            height=grid_height,
+        )
+        # Reduce
+        concept_attention_dict["cross_attention_maps"] = einops.reduce(
+            concept_attention_dict["cross_attention_maps"],
+            "steps concepts layers frames width height -> concepts frames width height",
+            reduction="mean",
+        )
+        # Pull out only the first len(concept) concept maps
+        concept_attention_dict["cross_attention_maps"] = concept_attention_dict["cross_attention_maps"][:len(concepts)]
 
         if not output_type == "latent":
             # Discard any padding frames that were added for CogVideoX 1.5

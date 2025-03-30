@@ -352,7 +352,8 @@ class ModifiedCogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMi
         hidden_states = hidden_states[:, text_seq_length:]
 
         concept_attention_dict = {
-            "concept_attention_maps": []
+            "concept_attention_maps": [],
+            "cross_attention_maps": [],
         }
 
         # 3. Transformer blocks
