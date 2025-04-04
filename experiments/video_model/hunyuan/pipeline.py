@@ -15,6 +15,7 @@
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import einops
 import numpy as np
 import torch
 from transformers import CLIPTextModel, CLIPTokenizer, LlamaModel, LlamaTokenizerFast
@@ -467,22 +468,32 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
     def encode_concepts(
         self,
         concepts: list[str],
+        prompt_template: str,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         max_sequence_length: int = 256,
     ):
-        concept_embeds, _ = self._get_llama_prompt_embeds(
-            concepts,
-            {"template": '{}'},
+        concept_embeds, concept_attention_mask = self._get_llama_prompt_embeds(
+            " ".join(concepts),
+            # {"template": '{}'},
+            prompt_template,
             1,
             device=device,
             dtype=dtype,
             max_sequence_length=max_sequence_length,
         )
         # Pull out the first index from each and stack them
-        concept_embeds = concept_embeds[:, 0]
+        # concept_embeds = concept_embeds[:, 0]
+        # concept_embeds = concept_embeds.unsqueeze(0) # Add batch dimension
+        # # Zero pad the concepts to max_sequence_length
+        # zero_padded_concepts = torch.zeros(1, max_sequence_length, concept_embeds.shape[-1], device=device, dtype=dtype)
+        # zero_padded_concepts[:, : len(concepts)] = concept_embeds
+        # concept_embeds = zero_padded_concepts
+        # Make attention mask of shape (batch_size, num_tokens) with one for the concepts
+        # concept_attention_mask = torch.zeros(1, max_sequence_length, device=device, dtype=torch.bool)
+        # concept_attention_mask[:, : len(concepts)] = 1
 
-        return concept_embeds
+        return concept_embeds, concept_attention_mask
 
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
@@ -518,6 +529,7 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         prompt_template: Dict[str, Any] = DEFAULT_PROMPT_TEMPLATE,
         max_sequence_length: int = 256,
+        concept_attention_kwargs=None
     ):
         r"""
         The call function to the pipeline for generation.
@@ -664,8 +676,9 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
         pooled_prompt_embeds = pooled_prompt_embeds.to(transformer_dtype)
 
         # Encode the concepts
-        concept_embeds = self.encode_concepts(
+        concept_embeds, concept_attention_mask = self.encode_concepts(
             concepts,
+            prompt_template,
             device=device,
             dtype=transformer_dtype,
             max_sequence_length=max_sequence_length
@@ -712,6 +725,11 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
 
+        # Make the concept attention dict
+        concept_attention_dict = {
+            "concept_attention_maps": [],
+        }
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -722,7 +740,7 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
-                noise_pred = self.transformer(
+                noise_pred, current_concept_attention_dict = self.transformer(
                     hidden_states=latent_model_input,
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
@@ -733,7 +751,11 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
                     guidance=guidance,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
-                )[0]
+                )
+
+                for k, v in current_concept_attention_dict.items():
+                    assert k in concept_attention_dict
+                    concept_attention_dict[k].append(v)
 
                 if do_true_cfg:
                     neg_noise_pred = self.transformer(
@@ -779,8 +801,46 @@ class ModifiedHunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixi
 
         # Offload all models
         self.maybe_free_model_hooks()
+        # Reshape the concept attention dict to the correct shape
+        concept_attention_dict["concept_attention_maps"] = torch.stack(
+            concept_attention_dict["concept_attention_maps"],
+            dim=0
+        )
+        # Pull out the concepts, removing padding
+        # concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, :, :, :len(concepts)]
+        # Shape: (num_timesteps, batch_size, layers, concepts + pad, num_frames * height * width)   
+        concept_attention_dict["concept_attention_maps"] = einops.rearrange(
+            concept_attention_dict["concept_attention_maps"],
+            "timesteps batch layers concepts frames -> batch concepts timesteps layers frames",
+        )
+        # Pull out the timesteps and layers of interest
+        concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, :, concept_attention_kwargs["timesteps"]] # Select the timesteps
+        concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, :, :, concept_attention_kwargs["layers"]] # Select the layers
+        # Apply a softmax over the concept dimension
+        concept_attention_dict["concept_attention_maps"] = torch.nn.functional.softmax(concept_attention_dict["concept_attention_maps"], dim=1)
+        # Rearrange the tensor to the correct shape
+        latent_frames = num_frames // self.vae_scale_factor_temporal + 1 # Need to add an extra latent frame
+        grid_height = height // (self.vae_scale_factor_spatial * self.transformer.config.patch_size)
+        grid_width = width // (self.vae_scale_factor_spatial * self.transformer.config.patch_size)
+        concept_attention_dict["concept_attention_maps"] = einops.rearrange(
+            concept_attention_dict["concept_attention_maps"],
+            "batch concepts steps layers (frames height width) -> batch concepts steps layers frames height width",
+            frames=latent_frames,
+            width=grid_width,
+            height=grid_height,
+        )
+        # Reduce along the timesteps and layers dimensions
+        concept_attention_dict["concept_attention_maps"] = einops.reduce(
+            concept_attention_dict["concept_attention_maps"],
+            "batch concepts steps layers frames width height -> batch concepts frames width height",
+            reduction="mean",
+        )
+        # Skip the first token and pull out the concepts
+        concept_attention_dict["concept_attention_maps"] = concept_attention_dict["concept_attention_maps"][:, 0:len(concepts)]
+        # Apply softmax
+        # concept_attention_dict["concept_attention_maps"] = torch.nn.functional.softmax(concept_attention_dict["concept_attention_maps"], dim=1)
 
         if not return_dict:
-            return (video,)
+            return (video, concept_attention_dict)
 
-        return HunyuanVideoPipelineOutput(frames=video)
+        return HunyuanVideoPipelineOutput(frames=video), concept_attention_dict

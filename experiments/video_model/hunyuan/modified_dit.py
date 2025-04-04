@@ -206,16 +206,6 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
 
-    def encode_concepts(
-        self, 
-        concepts: list[str]
-    ):
-        """
-            Encode the concepts with the text encoder.  
-        """
-
-        pass
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -223,6 +213,7 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
         encoder_hidden_states: torch.Tensor,
         concept_hidden_states: torch.Tensor,
         encoder_attention_mask: torch.Tensor,
+        concept_attention_mask: torch.Tensor,
         pooled_projections: torch.Tensor,
         guidance: torch.Tensor = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -256,7 +247,7 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
         temb = self.time_text_embed(timestep, guidance, pooled_projections)
         hidden_states = self.x_embedder(hidden_states)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states, timestep, encoder_attention_mask)
-        concept_hidden_states = self.context_embedder(concept_hidden_states, timestep, None)
+        concept_hidden_states = self.context_embedder(concept_hidden_states, timestep, concept_attention_mask)
 
         # 3. Attention mask preparation
         latent_sequence_length = hidden_states.shape[1]
@@ -271,6 +262,22 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
 
         for i in range(batch_size):
             attention_mask[i, : effective_sequence_length[i], : effective_sequence_length[i]] = True
+
+        # 4. Attention mask with concept
+        condition_sequence_length = concept_hidden_states.shape[1]
+        sequence_length = latent_sequence_length + condition_sequence_length
+        attention_mask_with_concept = torch.zeros(
+            batch_size, sequence_length, sequence_length, device=hidden_states.device, dtype=torch.bool
+        )
+        effective_condition_sequence_length = concept_attention_mask.sum(dim=1, dtype=torch.int)
+        effective_sequence_length = latent_sequence_length + effective_condition_sequence_length
+
+        for i in range(batch_size):
+            attention_mask_with_concept[i, : effective_sequence_length[i], : effective_sequence_length[i]] = True
+
+        combined_concept_attention_dict = {
+            "concept_attention_maps": [],
+        }
 
         # 4. Transformer blocks
         if torch.is_grad_enabled() and self.gradient_checkpointing:
@@ -287,14 +294,20 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
             ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             for block in self.transformer_blocks:
-                hidden_states, encoder_hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states, encoder_hidden_states, concept_hidden_states, concept_attention_dict = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
+                    concept_hidden_states,
                     temb,
                     attention_mask,
+                    attention_mask_with_concept,
                     image_rotary_emb,
                     **ckpt_kwargs,
+                )
+                # Add to the combined concept attention dict
+                combined_concept_attention_dict["concept_attention_maps"].append(
+                    concept_attention_dict["concept_attention_maps"]
                 )
 
             for block in self.single_transformer_blocks:
@@ -310,14 +323,25 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
 
         else:
             for block in self.transformer_blocks:
-                hidden_states, encoder_hidden_states = block(
-                    hidden_states, encoder_hidden_states, temb, attention_mask, image_rotary_emb
+                hidden_states, encoder_hidden_states, concept_hidden_states, concept_attention_dict = block(
+                    hidden_states, 
+                    encoder_hidden_states, 
+                    concept_hidden_states,
+                    temb, 
+                    attention_mask, 
+                    attention_mask_with_concept,
+                    image_rotary_emb
                 )
+                # Add to the combined concept attention dict
+                combined_concept_attention_dict["concept_attention_maps"].append(concept_attention_dict["concept_attention_maps"])
 
             for block in self.single_transformer_blocks:
                 hidden_states, encoder_hidden_states = block(
                     hidden_states, encoder_hidden_states, temb, attention_mask, image_rotary_emb
                 )
+
+        # Stack the concept attention maps
+        combined_concept_attention_dict["concept_attention_maps"] = torch.stack(combined_concept_attention_dict["concept_attention_maps"], dim=1)
 
         # 5. Output projection
         hidden_states = self.norm_out(hidden_states, temb)
@@ -334,6 +358,6 @@ class ModifiedHunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapte
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
-            return (hidden_states,)
+            return (hidden_states, combined_concept_attention_dict)
 
-        return Transformer2DModelOutput(sample=hidden_states)
+        return Transformer2DModelOutput(sample=hidden_states), combined_concept_attention_dict

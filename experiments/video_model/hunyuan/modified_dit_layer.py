@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import einops
 
 from diffusers.loaders import FromOriginalModelMixin
 
@@ -57,8 +58,10 @@ class ModifiedHunyuanVideoTransformerBlock(nn.Module):
         self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
+        concept_hidden_states: torch.Tensor,
         temb: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        attention_mask_with_concept: Optional[torch.Tensor] = None,
         freqs_cis: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # 1. Input normalization
@@ -75,7 +78,21 @@ class ModifiedHunyuanVideoTransformerBlock(nn.Module):
             image_rotary_emb=freqs_cis,
         )
 
-        # 3. Modulation and residual connection
+        #################### Do ConceptAttention operation  ####################
+        # 3. Concept embedding normalization
+        norm_concept_hidden_states, concept_gate_msa, concept_shift_mlp, concept_scale_mlp, concept_gate_mlp = self.norm1_context(
+            concept_hidden_states, 
+            emb=temb
+        )
+        # 4. Do the concept attention operation
+        _, concept_attn_output = self.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_concept_hidden_states,
+            attention_mask=attention_mask_with_concept,
+            image_rotary_emb=freqs_cis,
+        )
+        ########################################################################
+        # 5. Modulation and residual connection
         hidden_states = hidden_states + attn_output * gate_msa.unsqueeze(1)
         encoder_hidden_states = encoder_hidden_states + context_attn_output * c_gate_msa.unsqueeze(1)
 
@@ -85,11 +102,29 @@ class ModifiedHunyuanVideoTransformerBlock(nn.Module):
         norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
         norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
 
-        # 4. Feed-forward
+        # 6. Feed-forward
         ff_output = self.ff(norm_hidden_states)
         context_ff_output = self.ff_context(norm_encoder_hidden_states)
 
         hidden_states = hidden_states + gate_mlp.unsqueeze(1) * ff_output
         encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+        #################### Create concept attention maps  ####################
+        # 7. Now do the concept attention operation to create the maps
+        concept_attention_maps = einops.einsum(
+            attn_output,
+            concept_attn_output,
+            "batch num_patch dim, batch concepts dim -> batch concepts num_patch"
+        )
+        concept_attention_dict = {
+            "concept_attention_maps": concept_attention_maps.cpu()
+        }
+        # 8. Modulation and residual connection
+        concept_hidden_states = concept_hidden_states + concept_attn_output * concept_gate_msa.unsqueeze(1)
+        norm_concept_hidden_states = self.norm2_context(concept_hidden_states)
+        norm_concept_hidden_states = norm_concept_hidden_states * (1 + concept_scale_mlp[:, None]) + concept_shift_mlp[:, None]
+        # 9. Feed-forward
+        concept_ff_output = self.ff_context(norm_concept_hidden_states)
+        concept_hidden_states = concept_hidden_states + concept_gate_mlp.unsqueeze(1) * concept_ff_output
+        ########################################################################
 
-        return hidden_states, encoder_hidden_states
+        return hidden_states, encoder_hidden_states, concept_hidden_states, concept_attention_dict
