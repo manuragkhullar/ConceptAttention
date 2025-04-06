@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-def make_concept_attention_video(concepts, concept_attention_maps, save_path, fps=4):
+def make_concept_attention_video(concepts, concept_attention_maps, save_path, fps=4, color_map='inferno'):
     """
         For each concept, create a video using matplotlib where each frame is displayed as a heatmap.
 
@@ -23,7 +23,7 @@ def make_concept_attention_video(concepts, concept_attention_maps, save_path, fp
             heatmap = concept_attention_maps[i, frame, :, :].to(torch.float32).cpu().numpy()
             ax.imshow(
                 heatmap, 
-                cmap='inferno', 
+                cmap=color_map, 
                 interpolation='nearest',
                 vmin=concept_attention_maps.min(),
                 vmax=concept_attention_maps.max()
@@ -32,7 +32,7 @@ def make_concept_attention_video(concepts, concept_attention_maps, save_path, fp
     ani = animation.FuncAnimation(fig, update, frames=num_frames, repeat=False)
     ani.save(save_path, writer='ffmpeg', fps=fps)
 
-def make_individual_videos(concepts, concept_attention_maps, save_dir, fps=4):
+def make_individual_videos(concepts, concept_attention_maps, save_dir, fps=4, color_map='inferno'):
 
     def make_individual_video(concept, concept_attention_map, save_path):
 
@@ -51,7 +51,7 @@ def make_individual_videos(concepts, concept_attention_maps, save_dir, fps=4):
             heatmap = concept_attention_map[frame, :, :].to(torch.float32).cpu().numpy()
             ax.imshow(
                 heatmap, 
-                cmap='inferno', 
+                cmap=color_map, 
                 interpolation='nearest',
                 vmin=concept_attention_map.min(),
                 vmax=concept_attention_map.max()

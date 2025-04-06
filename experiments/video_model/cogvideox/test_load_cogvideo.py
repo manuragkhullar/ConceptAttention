@@ -34,9 +34,9 @@ if __name__ == "__main__":
     # pipe.vae.enable_slicing()
     # pipe.vae.enable_tiling()
 
-    prompt = "A golden retriever dog running in a grassy park. Trees in the background. Blue sky. Sun in the sky. The dog looks very happy and cheerful. "
+    prompt = "A golden retriever with a ball by a tree in the grass. Sky in background. "
     
-    concepts = ["dog", "grass", "sky", "tree"]
+    concepts = ["dog", "grass", "sky", "tree", "ball"]
     video, concept_attention_dict = pipe(
         prompt=prompt,
         concepts=concepts,
@@ -54,12 +54,12 @@ if __name__ == "__main__":
     video = video.frames[0]
 
     concept_attention_maps = concept_attention_dict["concept_attention_maps"]
-    make_concept_attention_video(concepts, concept_attention_maps, save_path="results/concept_attention.mp4")
+    make_concept_attention_video(concepts, concept_attention_maps, save_path="results/concept_attention.mp4", color_map="plasma")
 
     export_to_video(video, "results/output.mov", fps=8)
-    make_individual_videos(concepts, concept_attention_maps, save_dir="results", fps=8)
+    make_individual_videos(concepts, concept_attention_maps, save_dir="results", fps=8, color_map="plasma")
 
     # Now make videos for the cross attentions
     cross_attention_maps = concept_attention_dict["cross_attention_maps"]
-    make_concept_attention_video(concepts, cross_attention_maps, save_path="results/cross_attention.mp4")
-    make_individual_videos(concepts, cross_attention_maps, save_dir="results/cross_attentions", fps=8)
+    make_concept_attention_video(concepts, cross_attention_maps, save_path="results/cross_attention.mp4", color_map="plasma")
+    make_individual_videos(concepts, cross_attention_maps, save_dir="results/cross_attentions", fps=8, color_map="plasma")
