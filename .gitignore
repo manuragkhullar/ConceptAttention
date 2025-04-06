@@ -5,3 +5,5 @@ concept_attention/flux/src/flux.egg-info/PKG-INFO
 *.pyc
 src/
 .vscode/
+*.mov
+*.mp4
