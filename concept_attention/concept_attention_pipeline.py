@@ -33,7 +33,7 @@ def compute_heatmaps_from_vectors(
     timesteps: list[int] = list(range(4)),
     softmax: bool = True,                  # kept for backward-compat
     normalize_concepts: bool = False,
-    attention_norm: str = "softmax",       # <— NEW: "softmax" | "entmax15" | "sparsemax"
+    attention_norm: str = "sparsemax",       # <— NEW: "softmax" | "entmax15" | "sparsemax"
 ):
     """
     Accepts image vectors and concept vectors (from cross-attention or output-space)
