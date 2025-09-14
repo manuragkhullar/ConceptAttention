@@ -213,6 +213,7 @@ class ConceptAttentionFluxPipeline():
         seed: int = 0,
         cmap="plasma",
         stop_after_multi_modal_attentions=True,
+        attention_norm: str = "sparsemax",
         softmax=True
     ) -> ConceptAttentionPipelineOutput:
         """
