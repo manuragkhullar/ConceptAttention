@@ -153,7 +153,8 @@ class ConceptAttentionFluxPipeline():
             concept_attention_dict["cross_attention_concept_vectors"],
             layer_indices=layer_indices,
             timesteps=timesteps,
-            softmax=softmax
+            softmax=softmax, 
+            attention_norm=attention_norm
         )
         # Compute concept the heatmaps
         concept_heatmaps = compute_heatmaps_from_vectors(
@@ -161,7 +162,8 @@ class ConceptAttentionFluxPipeline():
             concept_attention_dict["output_space_concept_vectors"],
             layer_indices=layer_indices,
             timesteps=timesteps,
-            softmax=softmax
+            softmax=softmax, 
+            attention_norm=attention_norm
         )
 
         concept_heatmaps = concept_heatmaps.to(torch.float32).detach().cpu().numpy()[0]
@@ -305,7 +307,8 @@ class ConceptAttentionFluxPipeline():
             combined_concept_attention_dict["output_space_concept_vectors"],
             layer_indices=layer_indices,
             timesteps=timesteps,
-            softmax=softmax
+            softmax=softmax,
+            attention_norm=attention_norm
         )
 
         cross_attention_maps = compute_heatmaps_from_vectors(
@@ -314,7 +317,8 @@ class ConceptAttentionFluxPipeline():
             layer_indices=layer_indices,
             timesteps=timesteps,
             attention_norm=attention_norm,
-            softmax=softmax
+            softmax=softmax,
+            attention_norm=attention_norm
         )
 
         concept_heatmaps = concept_heatmaps.to(torch.float32).detach().cpu().numpy()[0]
