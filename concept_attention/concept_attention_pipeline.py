@@ -312,6 +312,7 @@ class ConceptAttentionFluxPipeline():
             combined_concept_attention_dict["cross_attention_concept_vectors"],
             layer_indices=layer_indices,
             timesteps=timesteps,
+            attention_norm=attention_norm,
             softmax=softmax
         )
 
