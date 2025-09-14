@@ -2,6 +2,7 @@
     Wrapper pipeline for concept attention. 
 """
 from dataclasses import dataclass
+from entmax import entmax15, sparsemax  # add at top with other imports
 import PIL
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,20 +24,23 @@ class ConceptAttentionPipelineOutput():
     cross_attention_maps: list[PIL.Image.Image]
 
 
+
+
 def compute_heatmaps_from_vectors(
     image_vectors,
     concept_vectors,
     layer_indices: list[int],
     timesteps: list[int] = list(range(4)),
-    softmax: bool = True,
-    normalize_concepts: bool = False
+    softmax: bool = True,                  # kept for backward-compat
+    normalize_concepts: bool = False,
+    attention_norm: str = "softmax",       # <— NEW: "softmax" | "entmax15" | "sparsemax"
 ):
     """
-        Accepts image vectors and concept vectors. These can be from cross attentions or attention outputs.  
+    Accepts image vectors and concept vectors (from cross-attention or output-space)
+    and returns per-concept heatmaps.
     """
-    # Check if there are heads in the input 
-    if len(image_vectors.shape) == 6: 
-        # Collapse the had dimension
+    # Collapse heads if present
+    if len(image_vectors.shape) == 6:
         image_vectors = einops.rearrange(
             image_vectors,
             "time layers batch head patches dim -> time layers batch patches (head dim)"
@@ -46,38 +50,44 @@ def compute_heatmaps_from_vectors(
             "time layers batch head concepts dim -> time layers batch concepts (head dim)"
         )
 
-
-    # Apply linear normalization to concepts
     if normalize_concepts:
         concept_vectors = linear_normalization(concept_vectors, dim=-2)
 
-    # Compute heatmaps 
+    # 1) Dot product similarities: [t, L, B, C, P]
     heatmaps = einops.einsum(
         image_vectors, 
         concept_vectors,
         "time layers batch patches dim, time layers batch concepts dim -> time layers batch concepts patches",
     )
 
-    # Apply softmax
-    if softmax:
+    # 2) Convert similarities -> weights across concepts per patch
+    if softmax or attention_norm == "softmax":
         heatmaps = torch.nn.functional.softmax(heatmaps, dim=-2)
-    # Pull out the timesteps and layers
+    elif attention_norm == "entmax15":
+        heatmaps = entmax15(heatmaps, dim=-2)
+    elif attention_norm == "sparsemax":
+        heatmaps = sparsemax(heatmaps, dim=-2)
+    else:
+        raise ValueError(f"Unknown attention_norm={attention_norm}")
+
+    # 3) Select timesteps/layers and average
     heatmaps = heatmaps[timesteps]
     heatmaps = heatmaps[:, layer_indices]
-    # Average over the heatmaps
     heatmaps = einops.reduce(
         heatmaps,
         "time layers batch concepts patches -> batch concepts patches",
         reduction="mean"
     )
+
+    # 4) Project patches back to 2D grid (here fixed to 64x64)
     heatmaps = einops.rearrange(
         heatmaps,
         "batch concepts (h w) -> batch concepts h w",
         h=64,
         w=64
     )
-
     return heatmaps
+
 
 class ConceptAttentionFluxPipeline():
     """
