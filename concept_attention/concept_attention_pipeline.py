@@ -52,6 +52,9 @@ def compute_heatmaps_from_vectors(
 
     if normalize_concepts:
         concept_vectors = linear_normalization(concept_vectors, dim=-2)
+    with torch.no_grad():
+    density = (heatmaps > 0).float().mean().item()
+    print(f"sparse density: {density:.3f}")  # sparsemax should be < 1.0
 
     # 1) Dot product similarities: [t, L, B, C, P]
     heatmaps = einops.einsum(
