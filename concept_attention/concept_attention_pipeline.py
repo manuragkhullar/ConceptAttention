@@ -125,6 +125,7 @@ class ConceptAttentionFluxPipeline():
         guidance: float = 0.0,
         timesteps=None,
         softmax: bool = True,
+        attention_norm: str = "sparsemax",
         cmap="plasma"
     ) -> ConceptAttentionPipelineOutput:
         """
