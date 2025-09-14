@@ -52,10 +52,7 @@ def compute_heatmaps_from_vectors(
 
     if normalize_concepts:
         concept_vectors = linear_normalization(concept_vectors, dim=-2)
-    with torch.no_grad():
-    density = (heatmaps > 0).float().mean().item()
-    print(f"sparse density: {density:.3f}")  # sparsemax should be < 1.0
-
+    
     # 1) Dot product similarities: [t, L, B, C, P]
     heatmaps = einops.einsum(
         image_vectors, 
@@ -72,7 +69,9 @@ def compute_heatmaps_from_vectors(
         heatmaps = sparsemax(heatmaps, dim=-2)
     else:
         raise ValueError(f"Unknown attention_norm={attention_norm}")
-
+    with torch.no_grad():
+        density = (heatmaps > 0).float().mean().item()
+        print(f"[debug] density={density:.3f} norm={attention_norm}")
     # 3) Select timesteps/layers and average
     heatmaps = heatmaps[timesteps]
     heatmaps = heatmaps[:, layer_indices]
@@ -319,7 +318,7 @@ class ConceptAttentionFluxPipeline():
             combined_concept_attention_dict["cross_attention_concept_vectors"],
             layer_indices=layer_indices,
             timesteps=timesteps,
-            attention_norm=attention_norm,
+    
             softmax=softmax,
             attention_norm=attention_norm
         )
